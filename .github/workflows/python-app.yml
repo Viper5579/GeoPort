@@ -2,17 +2,15 @@ name: Build EXE
 
 on:
   push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
+    tags:
+      - 'v*'  # triggers on tags like v1.0, v1.2.3, etc
 
 permissions:
-  contents: read
+  contents: write  # needs write to create releases
 
 jobs:
   build:
     runs-on: windows-latest
-
     steps:
     - uses: actions/checkout@v4
 
@@ -28,13 +26,11 @@ jobs:
         if (Test-Path requirements.txt) { pip install -r requirements.txt }
       shell: pwsh
 
-    - name: Build EXE with PyInstaller
-      run: |
-        pyinstaller --onefile --windowed src/main.py
+    - name: Build EXE
+      run: pyinstaller --onefile --windowed src/main.py
       shell: pwsh
 
-    - name: Upload EXE artifact
-      uses: actions/upload-artifact@v4
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
       with:
-        name: GeoPort-exe
-        path: dist/main.exe
+        files: dist/main.exe
