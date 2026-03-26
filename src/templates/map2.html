@@ -684,6 +684,26 @@ var timeToNextPoint = 'N/A';
 var velocitySelect = 'walk';
 let isDrawingMode = false; // Flag to track drawing mode
 
+var currentActivityType = 'walk';
+
+const activityIconMap = {
+    'cycling':  '<i class="fas fa-bicycle"  style="font-size:20px;color:#e85d04;"></i>',
+    'walking':  '<i class="fas fa-walking"  style="font-size:20px;color:#e85d04;"></i>',
+    'running':  '<i class="fas fa-running"  style="font-size:20px;color:#e85d04;"></i>',
+    'hiking':   '<i class="fas fa-hiking"   style="font-size:20px;color:#e85d04;"></i>',
+    'driving':  '<i class="fas fa-car"      style="font-size:20px;color:#e85d04;"></i>',
+};
+
+function getActivityIcon() {
+    const html = activityIconMap[currentActivityType] || activityIconMap['walking'];
+    return L.divIcon({
+        html: html,
+        iconSize: [24, 24],
+        iconAnchor: [12, 24],
+        className: ''
+    });
+}
+
 
 // Initialize the map
 async function initializeMap(userLocale) {
@@ -851,6 +871,28 @@ L.Control.fileLayerLoad({
         console.log("file load trigger")
     }
 }).addTo(map);
+
+// Hook file input to detect GPX activity type
+setTimeout(() => {
+    const fileInput = document.querySelector('.leaflet-control-filelayer input[type=file]');
+    if (fileInput) {
+        fileInput.addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(evt) {
+                const parser = new DOMParser();
+                const xml = parser.parseFromString(evt.target.result, 'text/xml');
+                const typeEl = xml.querySelector('trk > type');
+                if (typeEl) {
+                    currentActivityType = typeEl.textContent.trim().toLowerCase();
+                    console.log('GPX activity type detected:', currentActivityType);
+                }
+            };
+            reader.readAsText(file);
+        });
+    }
+}, 500);
 
 // Add drawnItems layer to map
 map.addLayer(drawnItems);
@@ -1295,6 +1337,25 @@ function handleMapClick(event) {
 
 
 
+// Smoothly animate marker from one point to another over a duration
+function animateMarker(marker, fromLatLng, toLatLng, duration, callback) {
+    const startTime = performance.now();
+
+    function frame(now) {
+        const t = Math.min((now - startTime) / duration, 1);
+        const lat = fromLatLng[0] + (toLatLng[0] - fromLatLng[0]) * t;
+        const lng = fromLatLng[1] + (toLatLng[1] - fromLatLng[1]) * t;
+        marker.setLatLng([lat, lng]);
+        if (t < 1 && !isPlaybackStopped) {
+            requestAnimationFrame(frame);
+        } else {
+            callback();
+        }
+    }
+
+    requestAnimationFrame(frame);
+}
+
 // Function to process next point in GPX data
 function processNextPoint() {
     console.log("process next point");
@@ -1307,7 +1368,7 @@ function processNextPoint() {
 
     if (!gpxMarker || !map.hasLayer(gpxMarker)) {
         // Create marker if it doesn't exist or has been removed
-        gpxMarker = L.marker([lat, lng], { icon: orangeIcon }).addTo(drawnItems);
+        gpxMarker = L.marker([lat, lng], { icon: getActivityIcon() }).addTo(drawnItems);
     } else {
         // Update marker position
         gpxMarker.setLatLng([lat, lng]);
@@ -1315,23 +1376,25 @@ function processNextPoint() {
 
     setCoordinates(lat, lng); // Set coordinates
     setLocationArrows();
-
-    //const velocity = document.getElementById('velocitySelect').value; // Get selected velocity
-    const velocity = velocitySelect;
-    const distance = playbackIndex > 0 ?
-        calculateDistance(lineLatLngs[playbackIndex - 1][0], lineLatLngs[playbackIndex - 1][1], lat, lng) :
-        0; // Calculate distance from previous point
-    timeToNextPoint = calculateTime(distance, velocity); // Update global variable with time to next point
-
-    console.log(`Time to next point: ${timeToNextPoint} seconds`); // Log time to next point
-    // Emit an event to indicate playback status change
     map.fire('playbackchange');
 
-    // Increment index and process next point after time interval
-    setTimeout(() => {
-        playbackIndex++;
-        processNextPoint();
-    }, timeToNextPoint * 1000); // Convert time to milliseconds
+    const nextIndex = playbackIndex + 1;
+
+    if (nextIndex < lineLatLngs.length && !isPlaybackStopped) {
+        const nextLatLng = lineLatLngs[nextIndex];
+        const distance = calculateDistance(lat, lng, nextLatLng[0], nextLatLng[1]);
+        timeToNextPoint = calculateTime(distance, velocitySelect);
+
+        console.log(`Time to next point: ${timeToNextPoint} seconds`);
+
+        animateMarker(gpxMarker, [lat, lng], nextLatLng, timeToNextPoint * 1000, () => {
+            playbackIndex++;
+            processNextPoint();
+        });
+    } else {
+        isPlaybackStopped = true;
+        playbackButton.state('play');
+    }
 }
 
 function calculateRoute(startPoint, endPoint) {
